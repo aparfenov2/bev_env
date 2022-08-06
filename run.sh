@@ -1,9 +1,17 @@
 set -ex
+[ "$1" == "--install-poetry" ] && {
+    mkdir .app
+}
+
 [ "$1" == "--inner" ] && {
     shift
     PATH="/app/.local/bin:$PATH"
-    # curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
-    . .venv/bin/activate
+
+    [ "$1" == "--install-poetry" ] && {
+        curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+        exit 0
+    }
+    . .venv/bin/activate || true
     $@
     exit $?
 }

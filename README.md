@@ -1,14 +1,23 @@
 Среда gym для обучения обьезду препятсвий
 
-# install
+# requirements
+    - NVIDIA card
 
+# install
 git clone ...
 # install poetry
-bash run.sh "curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -"
-# install dev
+bash run.sh --install-poetry
+# install environment
 bash run.sh poetry install
 
 # run
 # Ручное управление
 bash run.sh python manual_control.py
+
+Управление:
+! основное окно должно быть в фокусе
+управление стрелками:
+    LEFT/RIGHT - поворот влево-вправо
+    UP/DOWN - движение вперед/назад
+PGUP/PGDOWN - увеличить/уменьшить шаг
 
