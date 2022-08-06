@@ -7,7 +7,6 @@ authors = ["Aleksey Parfyonov <kantengri3@gmail.com>"]
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
 gym = {extras = ["classic_control"], version = "^0.24.0"}
-gym-miniworld = {path = "gym-miniworld"}
 opencv-python = "^4.6.0"
 
 [tool.poetry.dev-dependencies]
