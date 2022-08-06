@@ -1,10 +1,12 @@
 Среда gym для обучения обьезду препятсвий
 
+![static_snapshot](docs/bev_env.png)
+
 # requirements
     - NVIDIA card
 
 # install
-git clone ...
+git clone https://github.com/kantengri/bev_env
 # install poetry
 bash run.sh --install-poetry
 # install environment
