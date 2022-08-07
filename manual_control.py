@@ -16,6 +16,8 @@ import numpy as np
 import gym
 # import gym_miniworld
 import cv2
+import json
+import time
 
 from gym.envs.registration import register
 # from bev_env import BEVEnv
@@ -35,6 +37,9 @@ VIEW_MODE = 'human'
 class Main:
     def __init__(self, args):
         self.args = args
+        self.vel_inc = 0.1  # m/s
+        self.rad_inc = np.pi/180  # rad/s
+        self.cur_vel = [0, 0]
 
     def main(self):
         self.env = gym.make(self.args.env_name)
@@ -55,6 +60,7 @@ class Main:
 
         # Enter main event loop
         exit_game = False
+        vel = [0,0]
         while not exit_game:
             for event in pygame.event.get():  # For Loop
                 if cv2.waitKey(1) & 0xff == 27:
@@ -68,33 +74,33 @@ class Main:
                     if not ret:
                         exit_game = True
                         break
+            self.step()
             pygame.time.wait(0)
         self.env.close()
 
-    def print_state(self, action=None):
-        if action is None:
-            action_str = ""
-        else:
-            action_str = f"action {self.env.actions(action).name}"
-
-        print(f"step {self.env.step_count}/{self.env.max_episode_steps} {action_str} \
-step_size {self.env.step_size:3.3f} turn_size_rad {np.degrees(self.env.turn_size_rad):3.3f} \
-pos {self.env.pos[0]:3.3f}, {self.env.pos[1]:3.3f} dir {np.degrees(self.env.direction):3.3f}")
-
-    def step(self, action):
-        self.print_state(action)
-        obs, reward, done, info = self.env.step(action)
+    def step(self):
+        obs, reward, done, info = self.env.step(self.cur_vel)
         cv2.imshow("winname", obs)
         cv2.waitKey(1)
-
-        if reward > 0:
-            print('reward={:.2f}'.format(reward))
 
         if done:
             print('done!')
             self.env.reset()
 
+        info.update({
+            "cur_vel": self.cur_vel,
+            "vel_inc": self.vel_inc,
+            "rad_inc": self.rad_inc,
+        })
+        print("----------------------------------------------")
+        print(json.dumps(json.loads(json.dumps(info), parse_float=lambda x: round(float(x), 3)), indent=4))
+        # print(json.dumps(info, indent=4))
+
         self.env.render(mode=VIEW_MODE)
+
+        if info["collided_with_boundary"]:
+            self.cur_vel[1] = 0
+
 
     def on_key_press(self, symbol):
         """
@@ -106,32 +112,31 @@ pos {self.env.pos[0]:3.3f}, {self.env.pos[1]:3.3f} dir {np.degrees(self.env.dire
             print('RESET')
             self.env.reset()
             self.env.render( mode=VIEW_MODE)
+            self.cur_vel = [0,0]
             return True
 
         if symbol == pygame.K_ESCAPE:
             return False
 
         if symbol == pygame.K_UP:
-            self.step(self.env.actions.move_forward)
+            self.cur_vel[0] += self.vel_inc
+            self.cur_vel[1] = 0
 
         elif symbol == pygame.K_DOWN:
-            self.step(self.env.actions.move_back)
+            self.cur_vel[0] = max(0, self.cur_vel[0] - self.vel_inc)
+            self.cur_vel[1] = 0
 
         elif symbol == pygame.K_PAGEUP:
-            self.env.set_step_size(self.env.step_size + 1)
-            self.env.render(mode=VIEW_MODE)
-            self.print_state()
+            self.vel_inc += 0.1
 
         elif symbol == pygame.K_PAGEDOWN:
-            self.env.set_step_size(self.env.step_size - 1)
-            self.env.render(mode=VIEW_MODE)
-            self.print_state()
+            self.vel_inc = max(0, self.vel_inc - 0.1)
 
         elif symbol == pygame.K_LEFT:
-            self.step(self.env.actions.turn_left)
+            self.cur_vel[1] = max(-np.pi/2, self.cur_vel[1] - self.rad_inc)
 
         elif symbol == pygame.K_RIGHT:
-            self.step(self.env.actions.turn_right)
+            self.cur_vel[1] = min(np.pi/2, self.cur_vel[1] + self.rad_inc)
         return True
 
 if __name__ == '__main__':

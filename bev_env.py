@@ -10,81 +10,95 @@ import gym
 from gym import spaces
 from enum import Enum
 import cv2
+import time
 
-# Bird Eye View Env
 class BEVEnv(gym.Env):
+    "Bird Eye View Env with geometry_msgs/Twist as action"
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
-    class actions(Enum):
-        move_forward = 0
-        move_back = 1
-        turn_left = 2
-        turn_right = 3
 
-    def __init__(self, g=10.0):
+    def __init__(self, bg_rgb_img_path="montage_0.jpg", bg_segm_img_path="montage_5.jpg"):
         self.screen = None
-        self.screen_dim = (1024, 768)
+        self.screen_dim = (1024, 768) # pygame screen size
         self.clock = None
         self.img_0_small = None
         self.step_count = 0
         self.max_episode_steps = 0
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+        # action space: geometry_msgs/Twist
+        # linear.x - forward velocity, m/s
+        # angular.z - yaw speed, rad/s
+        self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
 
-        self.obs_img_shape = (160, 120, 3)
-        self.observation_space = spaces.Box(0., 255., (self.obs_img_shape[1], self.obs_img_shape[0], 3), dtype=np.uint8)
-        self.pos = [100.0, 100.0]
-        self.direction = 0.0
-        self.step_size = 10.0
-        self.turn_size_rad = np.pi/180.0
+        # observation space: RGB BEV segmentation image
+        obs_img_shape = (160, 120, 3)
+        self.observation_space = spaces.Box(0, 255, (obs_img_shape[1], obs_img_shape[0], 3), dtype=np.uint8)
 
-        self.img_0 = cv2.imread("montage_0.jpg")
+        self.current_position_m = [1.0, 1.0]
+        self.last_vel = (0, 0)
+        self.abs_direction_rad = np.pi/4  # clockwise positive
+
+        self.img_0 = cv2.imread(bg_rgb_img_path)
         self.img_0_small = cv2.resize(self.img_0, self.screen_dim)
         self.img_0_small = self.cvimage_to_pygame(self.img_0_small)
-        self.img_5 = cv2.imread("montage_5.jpg")
+        self.img_5 = cv2.imread(bg_segm_img_path)
         self.img_5 = self.cvimage_to_pygame(self.img_5)
 
-    def set_step_size(self, ss):
-        self.step_size = np.clip(ss, 1.0, 100)
-        self.turn_size_rad = np.clip(self.step_size/2, 1.0, 30.0) # degrees
-        self.turn_size_rad = np.radians(self.turn_size_rad)
+        self.last_time_sec = time.time()
+        self.m_to_pix = self.img_0.shape[1] / (5.0 * 8) # 5m/tile, 8x8 tiles
+
+    def position_in_pixels(self):
+        return (
+            self.current_position_m[0] * self.m_to_pix,
+            self.current_position_m[1] * self.m_to_pix
+        )
 
     def step(self, u):
+        self.last_vel = u
+        velocity_ms, yaw_rads = u
         costs = 0
         self.step_count += 1
-        min_pos = self.observation_space.shape[1]/2, self.observation_space.shape[0]/2
-        max_pos = self.img_0.shape[1] - self.observation_space.shape[1]/2, self.img_0.shape[0] - self.observation_space.shape[0]/2
+        time_sec = time.time()
+        time_diff = (time_sec - self.last_time_sec)
+        pos_increment_m = velocity_ms * time_diff
+        yaw_increment_rad = yaw_rads  * time_diff
+        self.last_time_sec = time_sec
 
-        ppos = list(self.pos)
-        pdir = self.direction
+        ppos = list(self.current_position_m)
+        pyaw = self.abs_direction_rad
 
-        if u == self.actions.move_back:
-            self.pos[0] = np.clip(self.pos[0] - self.step_size * np.cos(self.direction), min_pos[0], max_pos[0])
-            self.pos[1] = np.clip(self.pos[1] - self.step_size * np.sin(self.direction), min_pos[1], max_pos[1])
+        self.abs_direction_rad += yaw_increment_rad
+        self.current_position_m[0] += pos_increment_m * np.cos(self.abs_direction_rad)
+        self.current_position_m[1] += pos_increment_m * np.sin(self.abs_direction_rad)
+
+        collided_with_boundary = False
+        if not self.obs_in_rect():
+            print("refused to go outside image bounds")
+            self.current_position_m = list(ppos)
+            self.abs_direction_rad = np.pi - pyaw
+
+            self.current_position_m[0] += pos_increment_m * np.cos(self.abs_direction_rad)
+            self.current_position_m[1] += pos_increment_m * np.sin(self.abs_direction_rad)
             if not self.obs_in_rect():
-                print("refused to go outside image bounds")
-                self.pos = ppos
+                self.abs_direction_rad = -pyaw
 
-        elif u == self.actions.move_forward:
-            self.pos[0] = np.clip(self.pos[0] + self.step_size * np.cos(self.direction), min_pos[0], max_pos[0])
-            self.pos[1] = np.clip(self.pos[1] + self.step_size * np.sin(self.direction), min_pos[1], max_pos[1])
-            if not self.obs_in_rect():
-                print("refused to go outside image bounds")
-                self.pos = ppos
+            self.current_position_m = ppos
+            collided_with_boundary = True
 
-        elif u == self.actions.turn_left:
-            self.direction -= self.turn_size_rad
-            if not self.obs_in_rect():
-                print("cant turn outside image bounds")
-                self.direction = pdir
+        info = {
+            "step_count": self.step_count,
+            "max_episode_steps": self.max_episode_steps,
+            "last_action": u,
+            "pos_increment_m": pos_increment_m,
+            "yaw_increment_rad": yaw_increment_rad,
+            "current_position_m": self.current_position_m,
+            "current_position_pix": self.position_in_pixels(),
+            "abs_direction_rad": self.abs_direction_rad,
+            "reward": -costs,
+            "collided_with_boundary": collided_with_boundary
+        }
 
-        elif u == self.actions.turn_right:
-            self.direction += self.turn_size_rad
-            if not self.obs_in_rect():
-                print("cant turn outside image bounds")
-                self.direction = pdir
-
-        return self._get_obs(), -costs, False, {}
+        return self._get_obs(), -costs, False, info
 
     def reset(
         self,
@@ -106,19 +120,19 @@ class BEVEnv(gym.Env):
         num_rows = self.img_0.shape[0]
         num_cols = self.img_0.shape[1]
         width, height = self.observation_space.shape[:2][::-1]
-        rect = (self.pos, (width, height), np.degrees(self.direction + np.pi/2))
+        rect = (self.position_in_pixels(), (width, height), np.degrees(self.abs_direction_rad + np.pi/2))
         return inside_rect(rect = rect, num_cols = num_cols, num_rows = num_rows)
 
 
     def _get_obs(self):
         # return np.array([0,0], dtype=np.float32)
         # return self.observation_space.sample()
-        width, height = self.observation_space.shape[:2][::-1]
-        rect = (self.pos, (width, height), np.degrees(self.direction + np.pi/2))
+        height, width = self.observation_space.shape[:2]
+        rect = (self.position_in_pixels(), (width, height), np.degrees(self.abs_direction_rad + np.pi/2))
         crop = crop_rotated_rectangle(image = self.img_0, rect = rect)
 
         # h, w = self.observation_space.shape[:2]
-        # x1, y1 = int(self.pos[0] - w/2), int(self.pos[0] - h/2)
+        # x1, y1 = int(self.current_position_m[0] - w/2), int(self.current_position_m[0] - h/2)
         # x2, y2 = x1 + w, y1 + h
 
         # crop = self.img_0[y1:y2, x1:x2]
@@ -128,6 +142,14 @@ class BEVEnv(gym.Env):
         end = (
             start[0] + alen * math.cos(rotation),
             start[1] + alen * math.sin(rotation)
+        )
+        start = (
+            start[0] * self.screen_dim[0]/ self.img_0.shape[1],
+            start[1] * self.screen_dim[1]/ self.img_0.shape[0]
+        )
+        end = (
+            end[0] * self.screen_dim[0]/ self.img_0.shape[1],
+            end[1] * self.screen_dim[1]/ self.img_0.shape[0]
         )
         pg.draw.line(screen, lcolor, start, end, thickness)
         rotation = (math.atan2(start[1] - end[1], end[0] - start[0])) + math.pi/2
@@ -161,9 +183,9 @@ class BEVEnv(gym.Env):
             screen=self.surf,
             lcolor=(255, 255, 255),
             tricolor=(255, 255, 255),
-            start= (self.pos[0] * self.screen_dim[0]/ self.img_0.shape[1], self.pos[1] * self.screen_dim[1]/ self.img_0.shape[0]),
-            alen= np.clip(self.step_size, 50, 200),
-            rotation=self.direction,
+            start= self.position_in_pixels(),
+            alen= np.clip(self.last_vel[0] * 400, 200, 800),
+            rotation=self.abs_direction_rad,
             trirad=20
             )
 
