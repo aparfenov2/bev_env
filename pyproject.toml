@@ -6,10 +6,13 @@ authors = ["Aleksey Parfyonov <kantengri3@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
-gym = {extras = ["classic_control"], version = "^0.24.0"}
+gym = {version = "^0.21", extras = ["pygame"]}
 opencv-python = "^4.6.0"
 Pillow = "^9.2.0"
 pydantic = "^1.9.2"
+pygame = "^2.1.2"
+stable-baselines3 = "^1.6.0"
+debugpy = "^1.6.3"
 
 [tool.poetry.dev-dependencies]
 

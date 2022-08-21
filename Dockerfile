@@ -10,6 +10,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y curl python3.8-venv python-is-python3
 RUN apt update && apt install -y mesa-utils xserver-xorg
 
+# stable baselines mpi support
+# RUN apt update && apt install -y cmake libopenmpi-dev python3.8-dev zlib1g-dev
+
 RUN groupadd -g 1000 ubuntu
 RUN useradd -rm -d /app -s /bin/bash -g root -G 1000 -u 1000 ubuntu
 USER ubuntu

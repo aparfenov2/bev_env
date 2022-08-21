@@ -23,3 +23,5 @@ bash run.sh python manual_control.py
     UP/DOWN - движение вперед/назад
 PGUP/PGDOWN - увеличить/уменьшить шаг
 
+# training
+bash run.sh python train.py

@@ -29,6 +29,7 @@ done
 
 docker run -ti --rm \
     --gpus all \
+    --network host \
     -e "DISPLAY" \
     -e "QT_X11_NO_MITSHM=1" \
     -e "NVIDIA_DRIVER_CAPABILITIES=all" \

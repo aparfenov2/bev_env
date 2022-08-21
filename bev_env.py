@@ -4,7 +4,6 @@ from typing import Optional
 import math
 import numpy as np
 import pygame as pg
-# from pygame import gfxdraw
 
 import gym
 from gym import spaces
@@ -32,6 +31,50 @@ class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
         description="Observation Image Shape, (cols, rows)",
         default=(160, 120)
     )
+    mosaic_size_m: typing.Tuple[float, float] = pydantic.Field(
+        description="mosaic size (width, height), m",
+        default=(5*8, 40)
+    )
+    initial_pos: typing.Tuple[float, float] = pydantic.Field(
+        description="Initial position, (x,y), m",
+        default=(1.0, 1.0)
+    )
+    initial_rot: float = pydantic.Field(
+        description="Initial rotation, clockwise positive, rad",
+        default=np.pi/4
+    )
+    twist_only: bool = pydantic.Field(
+        default=False,
+        description="use 1d continious action space for turns, no velocity control"
+    )
+    default_speed_1d: float = pydantic.Field(
+        default=1.0,
+        description="cart speed in 1d mode, m/s"
+    )
+    render_in_step: bool = pydantic.Field(
+        description="call render() inside step(). Useful while training.",
+        default=False
+    )
+    segm_in_obs: bool = pydantic.Field(
+        description="return segmentation image in observation.",
+        default=True
+    )
+    random_pos: bool = pydantic.Field(
+        description="random initial position & orientation.",
+        default=False
+    )
+    obstacle_done: bool = pydantic.Field(
+        description="return Done on collision.",
+        default=True
+    )
+    render_fps: int = pydantic.Field(
+        description="rendering fps",
+        default=30
+    )
+    const_dt: float = pydantic.Field(
+        description="use constant dt in step()",
+        default=None
+    )
 
 class BEVEnv(gym.Env):
     "Bird Eye View Env with geometry_msgs/Twist as action"
@@ -39,7 +82,7 @@ class BEVEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     def __init__(self, **kwargs):
-        config = BEVConfig(**kwargs)
+        self.config = config = BEVConfig(**kwargs)
         self.grass_colors = [ImageColor.getcolor(grass_color, "RGB")[::-1] for grass_color in config.grass_colors]
         self.screen = None
         self.screen_dim = (1024, 768) # pygame screen size
@@ -51,38 +94,73 @@ class BEVEnv(gym.Env):
         # action space: geometry_msgs/Twist
         # linear.x - forward velocity, m/s
         # angular.z - yaw speed, rad/s
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
+        if self.config.twist_only:
+            self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+        else:
+            self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
 
         # observation space: RGB BEV segmentation image
         obs_img_shape = config.obs_img_shape + (3,)
         self.observation_space = spaces.Box(0, 255, (obs_img_shape[1], obs_img_shape[0], 3), dtype=np.uint8)
 
-        self.current_position_m = [1.0, 1.0]
-        self.last_vel = (0, 0)
-        self.abs_direction_rad = np.pi/4  # clockwise positive
-
         self.img_0 = cv2.imread(config.bg_rgb_img_path)
-        self.img_0_small = cv2.resize(self.img_0, self.screen_dim)
-        self.img_0_small = self.cvimage_to_pygame(self.img_0_small)
         self.img_5 = cv2.imread(config.bg_segm_img_path)
-        # self.img_5_surface = self.cvimage_to_pygame(self.img_5)
 
         self.last_time_sec = time.time()
-        self.m_to_pix = self.img_0.shape[1] / (5.0 * 8) # 5m/tile, 8x8 tiles
+        self.m_to_pix = (
+            self.img_0.shape[0] / self.config.mosaic_size_m[0],
+            self.img_0.shape[1] / self.config.mosaic_size_m[1]
+        ) # 5m/tile, 8x8 tiles
+        self._reset()
+
+    def _reset(self):
+        self.step_count = 0
+        self.last_time_sec = time.time()
+        self.current_position_m = list(self.config.initial_pos)
+        self.abs_direction_rad = self.config.initial_rot  # clockwise positive
+        if self.config.random_pos:
+            tryouts = 100
+            while tryouts > 0:
+                self.current_position_m = np.random.uniform(low=1.0, high=39.0, size=(2,)).tolist()
+                self.abs_direction_rad = np.random.uniform(low=-np.pi/2, high=np.pi/2, size=(1,)).item()
+                if self.staying_on_the_grass():
+                    break
+            if not self.staying_on_the_grass():
+                raise Exception("cannot randomly place cart in allowed area")
+
+        if self.config.twist_only:
+            self.last_vel = (self.config.default_speed_1d, 0)
+        else:
+            self.last_vel = (0, 0)
 
     def position_in_pixels(self):
         return (
-            self.current_position_m[0] * self.m_to_pix,
-            self.current_position_m[1] * self.m_to_pix
+            self.current_position_m[0] * self.m_to_pix[0],
+            self.current_position_m[1] * self.m_to_pix[1]
         )
 
+    def staying_on_the_grass(self):
+        pos_pix = tuple(map(int, self.position_in_pixels()))[::-1]
+        color_at_pos = tuple(map(int, self.img_5[pos_pix]))
+        return color_at_pos in self.grass_colors
+
     def step(self, u):
-        self.last_vel = u
-        velocity_ms, yaw_rads = u
+        # u = tuple(map(float, u))
+        u = np.array(u).tolist()
+        if len(u) == 1:
+            u = u[0]
+        if self.config.twist_only:
+            self.last_vel = (self.last_vel[0], u)
+        else:
+            self.last_vel = u
+
+        velocity_ms, yaw_rads = self.last_vel
         costs = 0
         self.step_count += 1
         time_sec = time.time()
         time_diff = (time_sec - self.last_time_sec)
+        if self.config.const_dt is not None:
+            time_diff = self.config.const_dt
         pos_increment_m = velocity_ms * time_diff
         yaw_increment_rad = yaw_rads  * time_diff
         self.last_time_sec = time_sec
@@ -107,10 +185,8 @@ class BEVEnv(gym.Env):
 
             self.current_position_m = ppos
             collided_with_boundary = True
-        pos_pix = tuple(map(int, self.position_in_pixels()))[::-1]
-        color_at_pos = tuple(map(int, self.img_5[pos_pix]))
-        if color_at_pos not in self.grass_colors:
-            costs = 1.0
+
+        costs = 0 if self.staying_on_the_grass() else 1.0
 
         info = {
             "step_count": self.step_count,
@@ -123,10 +199,16 @@ class BEVEnv(gym.Env):
             "abs_direction_rad": self.abs_direction_rad,
             "reward": -costs,
             "collided_with_boundary": collided_with_boundary,
-            "color_at_pos": color_at_pos
         }
 
-        return self._get_obs(), -costs, False, info
+        if self.config.render_in_step:
+            self.render()
+        done = False
+        if self.config.obstacle_done:
+            done = costs > 0
+        if done:
+            print("rollout done")
+        return self._get_obs(), -costs, done, info
 
     def reset(
         self,
@@ -135,9 +217,9 @@ class BEVEnv(gym.Env):
         return_info: bool = False,
         options: Optional[dict] = None
     ):
-        super().reset(seed=seed)
+        # super().reset(seed=seed)
 
-        self.step_count = 0
+        self._reset()
 
         if not return_info:
             return self._get_obs()
@@ -157,7 +239,10 @@ class BEVEnv(gym.Env):
         # return self.observation_space.sample()
         height, width = self.observation_space.shape[:2]
         rect = (self.position_in_pixels(), (width, height), np.degrees(self.abs_direction_rad + np.pi/2))
-        crop = crop_rotated_rectangle(image = self.img_0, rect = rect)
+        img = self.img_0
+        if self.config.segm_in_obs:
+            img = self.img_5
+        crop = crop_rotated_rectangle(image = img, rect = rect)
 
         # h, w = self.observation_space.shape[:2]
         # x1, y1 = int(self.current_position_m[0] - w/2), int(self.current_position_m[0] - h/2)
@@ -199,9 +284,12 @@ class BEVEnv(gym.Env):
             pg.init()
             pg.display.init()
             self.screen = pg.display.set_mode(self.screen_dim)
+            self.img_0_small = cv2.resize(self.img_0, self.screen_dim)
+            self.img_0_small = self.cvimage_to_pygame(self.img_0_small)
 
         if self.clock is None:
             self.clock = pg.time.Clock()
+
 
         self.surf = pg.Surface(self.screen_dim)
         # self.surf.fill((255, 255, 255))
@@ -220,7 +308,7 @@ class BEVEnv(gym.Env):
         self.screen.blit(self.surf, (0, 0))
         if mode == "human":
             pg.event.pump()
-            self.clock.tick(self.metadata["render_fps"])
+            self.clock.tick(self.config.render_fps)
             pg.display.flip()
 
         if mode == "rgb_array":
