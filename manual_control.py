@@ -33,12 +33,16 @@ def make_parser():
     return parser
 
 VIEW_MODE = 'human'
+MIN_VEL  = 0
+MAX_VEL  = 5.0
+MIN_RVEL = -np.pi/2
+MAX_RVEL = np.pi/2
 
 class Main:
     def __init__(self, args):
         self.args = args
-        self.vel_inc = 0.1  # m/s
-        self.rad_inc = np.pi/180  # rad/s
+        self.vel_inc = 1.0  # m/s
+        self.rad_inc = MAX_RVEL  # rad/s
         self.cur_vel = [0, 0]
 
     def main(self):
@@ -69,6 +73,8 @@ class Main:
                 if event.type == pygame.QUIT:
                     exit_game = True
                     break
+                if event.type == pygame.KEYUP:
+                    self.on_key_release(event.key)
                 if event.type == pygame.KEYDOWN:
                     ret = self.on_key_press(event.key)
                     if not ret:
@@ -119,11 +125,11 @@ class Main:
             return False
 
         if symbol == pygame.K_UP:
-            self.cur_vel[0] += self.vel_inc
+            self.cur_vel[0] = min(MAX_VEL, self.cur_vel[0] + self.vel_inc)
             self.cur_vel[1] = 0
 
         elif symbol == pygame.K_DOWN:
-            self.cur_vel[0] = max(0, self.cur_vel[0] - self.vel_inc)
+            self.cur_vel[0] = max(MIN_VEL, self.cur_vel[0] - self.vel_inc)
             self.cur_vel[1] = 0
 
         elif symbol == pygame.K_PAGEUP:
@@ -133,11 +139,17 @@ class Main:
             self.vel_inc = max(0, self.vel_inc - 0.1)
 
         elif symbol == pygame.K_LEFT:
-            self.cur_vel[1] = max(-np.pi/2, self.cur_vel[1] - self.rad_inc)
+            self.cur_vel[1] = max(MIN_RVEL, self.cur_vel[1] - self.rad_inc)
 
         elif symbol == pygame.K_RIGHT:
-            self.cur_vel[1] = min(np.pi/2, self.cur_vel[1] + self.rad_inc)
+            self.cur_vel[1] = min(MAX_RVEL, self.cur_vel[1] + self.rad_inc)
         return True
+
+    def on_key_release(self, symbol):
+        if symbol == pygame.K_LEFT:
+            self.cur_vel[1] = 0
+        if symbol == pygame.K_RIGHT:
+            self.cur_vel[1] = 0
 
 if __name__ == '__main__':
     Main(make_parser().parse_args()).main()
