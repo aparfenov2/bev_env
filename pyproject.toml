@@ -8,6 +8,8 @@ authors = ["Aleksey Parfyonov <kantengri3@gmail.com>"]
 python = ">=3.8,<3.11"
 gym = {extras = ["classic_control"], version = "^0.24.0"}
 opencv-python = "^4.6.0"
+Pillow = "^9.2.0"
+pydantic = "^1.9.2"
 
 [tool.poetry.dev-dependencies]
 

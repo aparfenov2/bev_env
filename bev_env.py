@@ -11,13 +11,36 @@ from gym import spaces
 from enum import Enum
 import cv2
 import time
+from PIL import ImageColor
+import pydantic
+import typing
+
+class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
+    bg_rgb_img_path: str = pydantic.Field(
+        description="path to RGB mosaic image",
+        default="montage_0.jpg"
+    )
+    bg_segm_img_path: str = pydantic.Field(
+        description="path to SEGM mosaic image",
+        default="montage_5.jpg"
+    )
+    grass_colors: typing.List[str] = pydantic.Field(
+        description="Allowable Area Colors",
+        default=["#B4469C", "#BC469C"]
+    )
+    obs_img_shape: typing.Tuple[int, int] = pydantic.Field(
+        description="Observation Image Shape, (cols, rows)",
+        default=(160, 120)
+    )
 
 class BEVEnv(gym.Env):
     "Bird Eye View Env with geometry_msgs/Twist as action"
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, bg_rgb_img_path="montage_0.jpg", bg_segm_img_path="montage_5.jpg"):
+    def __init__(self, **kwargs):
+        config = BEVConfig(**kwargs)
+        self.grass_colors = [ImageColor.getcolor(grass_color, "RGB")[::-1] for grass_color in config.grass_colors]
         self.screen = None
         self.screen_dim = (1024, 768) # pygame screen size
         self.clock = None
@@ -31,18 +54,18 @@ class BEVEnv(gym.Env):
         self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
 
         # observation space: RGB BEV segmentation image
-        obs_img_shape = (160, 120, 3)
+        obs_img_shape = config.obs_img_shape + (3,)
         self.observation_space = spaces.Box(0, 255, (obs_img_shape[1], obs_img_shape[0], 3), dtype=np.uint8)
 
         self.current_position_m = [1.0, 1.0]
         self.last_vel = (0, 0)
         self.abs_direction_rad = np.pi/4  # clockwise positive
 
-        self.img_0 = cv2.imread(bg_rgb_img_path)
+        self.img_0 = cv2.imread(config.bg_rgb_img_path)
         self.img_0_small = cv2.resize(self.img_0, self.screen_dim)
         self.img_0_small = self.cvimage_to_pygame(self.img_0_small)
-        self.img_5 = cv2.imread(bg_segm_img_path)
-        self.img_5 = self.cvimage_to_pygame(self.img_5)
+        self.img_5 = cv2.imread(config.bg_segm_img_path)
+        # self.img_5_surface = self.cvimage_to_pygame(self.img_5)
 
         self.last_time_sec = time.time()
         self.m_to_pix = self.img_0.shape[1] / (5.0 * 8) # 5m/tile, 8x8 tiles
@@ -84,6 +107,10 @@ class BEVEnv(gym.Env):
 
             self.current_position_m = ppos
             collided_with_boundary = True
+        pos_pix = tuple(map(int, self.position_in_pixels()))[::-1]
+        color_at_pos = tuple(map(int, self.img_5[pos_pix]))
+        if color_at_pos not in self.grass_colors:
+            costs = 1.0
 
         info = {
             "step_count": self.step_count,
@@ -95,7 +122,8 @@ class BEVEnv(gym.Env):
             "current_position_pix": self.position_in_pixels(),
             "abs_direction_rad": self.abs_direction_rad,
             "reward": -costs,
-            "collided_with_boundary": collided_with_boundary
+            "collided_with_boundary": collided_with_boundary,
+            "color_at_pos": color_at_pos
         }
 
         return self._get_obs(), -costs, False, info
