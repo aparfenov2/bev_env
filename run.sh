@@ -12,6 +12,7 @@ set -ex
         exit 0
     }
     . .venv/bin/activate || true
+    export PYTHONDONTWRITEBYTECODE=1
     $@
     exit $?
 }

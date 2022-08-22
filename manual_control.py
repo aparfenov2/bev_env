@@ -18,10 +18,11 @@ import gym
 import cv2
 import json
 import time
+import bev_env
 
-from gym.envs.registration import register
+# from gym.envs.registration import register
 # from bev_env import BEVEnv
-register(id='BEVEnv-v1',entry_point='bev_env:BEVEnv',)
+# register(id='BEVEnv-v1',entry_point='bev_env:BEVEnv',)
 
 def make_parser():
     parser = argparse.ArgumentParser()

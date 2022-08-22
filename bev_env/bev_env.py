@@ -13,6 +13,7 @@ import time
 from PIL import ImageColor
 import pydantic
 import typing
+import logging
 
 class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
     bg_rgb_img_path: str = pydantic.Field(
@@ -63,9 +64,17 @@ class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
         description="random initial position & orientation.",
         default=False
     )
+    init_logging: bool = pydantic.Field(
+        description="initialize logging.",
+        default=False
+    )
     obstacle_done: bool = pydantic.Field(
         description="return Done on collision.",
         default=True
+    )
+    obstacle_cost: float = pydantic.Field(
+        default=500.0,
+        description="cost of colliding with obstacle, reward = -cost"
     )
     render_fps: int = pydantic.Field(
         description="rendering fps",
@@ -75,6 +84,10 @@ class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
         description="use constant dt in step()",
         default=None
     )
+    max_episode_steps: int = pydantic.Field(
+        description="max episode steps",
+        default=0
+    )
 
 class BEVEnv(gym.Env):
     "Bird Eye View Env with geometry_msgs/Twist as action"
@@ -82,14 +95,16 @@ class BEVEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     def __init__(self, **kwargs):
-        self.config = config = BEVConfig(**kwargs)
-        self.grass_colors = [ImageColor.getcolor(grass_color, "RGB")[::-1] for grass_color in config.grass_colors]
+        self.config = BEVConfig(**kwargs)
+        if self.config.init_logging:
+            logging.basicConfig(level=logging.DEBUG)
+
+        self.grass_colors = [ImageColor.getcolor(grass_color, "RGB")[::-1] for grass_color in self.config.grass_colors]
         self.screen = None
         self.screen_dim = (1024, 768) # pygame screen size
         self.clock = None
         self.img_0_small = None
         self.step_count = 0
-        self.max_episode_steps = 0
 
         # action space: geometry_msgs/Twist
         # linear.x - forward velocity, m/s
@@ -100,11 +115,11 @@ class BEVEnv(gym.Env):
             self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
 
         # observation space: RGB BEV segmentation image
-        obs_img_shape = config.obs_img_shape + (3,)
+        obs_img_shape = self.config.obs_img_shape + (3,)
         self.observation_space = spaces.Box(0, 255, (obs_img_shape[1], obs_img_shape[0], 3), dtype=np.uint8)
 
-        self.img_0 = cv2.imread(config.bg_rgb_img_path)
-        self.img_5 = cv2.imread(config.bg_segm_img_path)
+        self.img_0 = cv2.imread(self.config.bg_rgb_img_path)
+        self.img_5 = cv2.imread(self.config.bg_segm_img_path)
 
         self.last_time_sec = time.time()
         self.m_to_pix = (
@@ -132,6 +147,7 @@ class BEVEnv(gym.Env):
             self.last_vel = (self.config.default_speed_1d, 0)
         else:
             self.last_vel = (0, 0)
+        logging.info(f"initial location {self.current_position_m} direction {self.abs_direction_rad} speed {self.last_vel}")
 
     def position_in_pixels(self):
         return (
@@ -174,7 +190,7 @@ class BEVEnv(gym.Env):
 
         collided_with_boundary = False
         if not self.obs_in_rect():
-            print("refused to go outside image bounds")
+            logging.info(f"at step {self.step_count} refused to go outside image bounds at location {self.current_position_m} direction {self.abs_direction_rad}")
             self.current_position_m = list(ppos)
             self.abs_direction_rad = np.pi - pyaw
 
@@ -186,11 +202,11 @@ class BEVEnv(gym.Env):
             self.current_position_m = ppos
             collided_with_boundary = True
 
-        costs = 0 if self.staying_on_the_grass() else 1.0
+        costs = -1.0 if self.staying_on_the_grass() else self.config.obstacle_cost
 
         info = {
             "step_count": self.step_count,
-            "max_episode_steps": self.max_episode_steps,
+            "max_episode_steps": self.config.max_episode_steps,
             "last_action": u,
             "pos_increment_m": pos_increment_m,
             "yaw_increment_rad": yaw_increment_rad,
@@ -204,10 +220,14 @@ class BEVEnv(gym.Env):
         if self.config.render_in_step:
             self.render()
         done = False
-        if self.config.obstacle_done:
+        if self.config.max_episode_steps > 0:
+            if self.step_count >= self.config.max_episode_steps:
+                logging.info(f"max episodes at step {self.config.max_episode_steps} reached")
+                done = True
+        if not done and self.config.obstacle_done:
             done = costs > 0
         if done:
-            print("rollout done")
+            logging.info(f"rollout done at step {self.step_count}")
         return self._get_obs(), -costs, done, info
 
     def reset(
@@ -432,7 +452,7 @@ def crop_rectangle(image, rect):
     num_cols = image.shape[1]
 
     if not inside_rect(rect = rect, num_cols = num_cols, num_rows = num_rows):
-        print("Proposed rectangle is not fully in the image.")
+        logging.info("Proposed rectangle is not fully in the image.")
         return None
 
     rect_center = rect[0]
@@ -451,7 +471,7 @@ def crop_rotated_rectangle(image, rect):
     num_cols = image.shape[1]
 
     if not inside_rect(rect = rect, num_cols = num_cols, num_rows = num_rows):
-        print("Proposed rectangle is not fully in the image.")
+        logging.info("Proposed rectangle is not fully in the image.")
         return None
 
     rotated_angle = rect[2]
