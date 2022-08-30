@@ -47,7 +47,7 @@ class Main:
         self.cur_vel = [0, 0]
 
     def main(self):
-        self.env = gym.make(self.args.env_name, segm_in_obs=False)
+        self.env = gym.make(self.args.env_name, segm_in_obs=True)
 
         if self.args.no_time_limit:
             self.env.max_episode_steps = math.inf
@@ -86,7 +86,10 @@ class Main:
         self.env.close()
 
     def step(self):
-        obs, reward, done, info = self.env.step(self.cur_vel)
+        action = self.cur_vel
+        if len(self.env.action_space.shape) == 1 and self.env.action_space.shape[0] == 1:
+            action = self.cur_vel[1]
+        obs, reward, done, info = self.env.step(action)
         cv2.imshow("winname", obs)
         cv2.waitKey(1)
 

@@ -1,5 +1,3 @@
-
-from os import path
 from typing import Optional
 import math
 import numpy as np
@@ -7,7 +5,6 @@ import pygame as pg
 
 import gym
 from gym import spaces
-from enum import Enum
 import cv2
 import time
 from PIL import ImageColor
@@ -45,7 +42,7 @@ class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
         default=np.pi/4
     )
     twist_only: bool = pydantic.Field(
-        default=False,
+        default=True,
         description="use 1d continious action space for turns, no velocity control"
     )
     default_speed_1d: float = pydantic.Field(
@@ -110,7 +107,7 @@ class BEVEnv(gym.Env):
         # linear.x - forward velocity, m/s
         # angular.z - yaw speed, rad/s
         if self.config.twist_only:
-            self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+            self.action_space = spaces.Box(low=-np.pi/2, high=np.pi/2, shape=(1,), dtype=np.float32)
         else:
             self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
 
@@ -160,15 +157,22 @@ class BEVEnv(gym.Env):
         color_at_pos = tuple(map(int, self.img_5[pos_pix]))
         return color_at_pos in self.grass_colors
 
-    def step(self, u):
-        # u = tuple(map(float, u))
-        u = np.array(u).tolist()
-        if len(u) == 1:
-            u = u[0]
+    def only_grass_in_obs(self, img):
+        colors, counts = np.unique(img.reshape(-1, img.shape[-1]), axis=0, return_counts=True)
+        # remove colors with counts < 1% of obs area in pix
+        thd = 0.1 * np.prod(img.shape[:2])
+        colors = [tuple(col) for col, cnt in zip(colors, counts) if cnt > thd]
+        return set(colors) - set(self.grass_colors) == set()
+
+    def step(self, action):
+        action = np.array(action).reshape(self.action_space.shape).astype(self.action_space.dtype)
+        assert self.action_space.contains(action), f"Invalid Action {action}, space={self.action_space}"
+        if len(action.shape) == 1 and action.shape[0] == 1:
+            action = action.item()
         if self.config.twist_only:
-            self.last_vel = (self.last_vel[0], u)
+            self.last_vel = (self.last_vel[0], action)
         else:
-            self.last_vel = u
+            self.last_vel = action
 
         velocity_ms, yaw_rads = self.last_vel
         costs = 0
@@ -188,6 +192,7 @@ class BEVEnv(gym.Env):
         self.current_position_m[0] += pos_increment_m * np.cos(self.abs_direction_rad)
         self.current_position_m[1] += pos_increment_m * np.sin(self.abs_direction_rad)
 
+        # wall bouncing logic
         collided_with_boundary = False
         if not self.obs_in_rect():
             logging.info(f"at step {self.step_count} refused to go outside image bounds at location {self.current_position_m} direction {self.abs_direction_rad}")
@@ -202,12 +207,21 @@ class BEVEnv(gym.Env):
             self.current_position_m = ppos
             collided_with_boundary = True
 
-        costs = -1.0 if self.staying_on_the_grass() else self.config.obstacle_cost
+        # cost calculation
+        hit_obstacle = not self.staying_on_the_grass()
+        if hit_obstacle:
+            logging.warning(f"at step {self.step_count} hit an obstacle at location {self.current_position_m} direction {self.abs_direction_rad}")
+        costs = -1.0 if not hit_obstacle else self.config.obstacle_cost
+        obs = self._get_obs()
+        only_grass_around = self.only_grass_in_obs(obs)
+        if only_grass_around:
+            if not (-0.1 < yaw_rads < 0.1):
+                costs += 0.5
 
         info = {
             "step_count": self.step_count,
             "max_episode_steps": self.config.max_episode_steps,
-            "last_action": u,
+            "last_action": action,
             "pos_increment_m": pos_increment_m,
             "yaw_increment_rad": yaw_increment_rad,
             "current_position_m": self.current_position_m,
@@ -215,20 +229,24 @@ class BEVEnv(gym.Env):
             "abs_direction_rad": self.abs_direction_rad,
             "reward": -costs,
             "collided_with_boundary": collided_with_boundary,
+            "only_grass_around": only_grass_around
         }
 
         if self.config.render_in_step:
             self.render()
         done = False
+        info["TimeLimit.truncated"] = False
         if self.config.max_episode_steps > 0:
             if self.step_count >= self.config.max_episode_steps:
                 logging.info(f"max episodes at step {self.config.max_episode_steps} reached")
-                done = True
-        if not done and self.config.obstacle_done:
-            done = costs > 0
+                # done = True
+                info["TimeLimit.truncated"] = True
+        if self.config.obstacle_done and hit_obstacle:
+            done = True
         if done:
+            info["TimeLimit.truncated"] = False
             logging.info(f"rollout done at step {self.step_count}")
-        return self._get_obs(), -costs, done, info
+        return obs, -costs, done, info
 
     def reset(
         self,

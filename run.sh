@@ -1,4 +1,4 @@
-set -ex
+set -e
 [ "$1" == "--install-poetry" ] && {
     mkdir .app
 }
@@ -12,14 +12,21 @@ set -ex
         exit 0
     }
     . .venv/bin/activate || true
+    set -ex
     export PYTHONDONTWRITEBYTECODE=1
-    $@
+    [ "${1##*.}" == "py" ] && {
+        _PYTHON=python
+    }
+    ${_PYTHON} $@
     exit $?
 }
 
 image="ml-py38-gpu"
 
-docker build -t $image -f Dockerfile /var/mail
+[ "$1" == "--build" ] && {
+    docker build -t $image -f Dockerfile /var/mail
+    exit 0
+}
 
 VOLUMES=()
 for f in $(find . -type l); do
