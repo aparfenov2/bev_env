@@ -349,27 +349,49 @@ CarRacing-v0:
                        )"
 
 BEVEnv-v1:
-  frame_stack: 2
-  normalize: "{'norm_obs': False, 'norm_reward': False}"
+  normalize: true
   n_envs: 1
-  n_timesteps: !!float 4e6
-  policy: 'CnnPolicy'
-  batch_size: 128
+  n_timesteps: !!float 1e6
+  policy: 'MlpPolicy'
+  batch_size: 64
   n_steps: 512
   gamma: 0.99
-  gae_lambda: 0.95
-  n_epochs: 10
+  gae_lambda: 0.9
+  n_epochs: 20
   ent_coef: 0.0
   sde_sample_freq: 4
   max_grad_norm: 0.5
   vf_coef: 0.5
-  learning_rate: lin_1e-4
+  learning_rate: !!float 3e-5
   use_sde: True
   clip_range: 0.2
-  policy_kwargs: "dict(log_std_init=-2,
+  policy_kwargs: "dict(log_std_init=-2.7,
                        ortho_init=False,
-                       activation_fn=nn.GELU,
-                       net_arch=[dict(pi=[256], vf=[256])],
+                       activation_fn=nn.ReLU,
+                       net_arch=[256, dict(pi=[256], vf=[256])]
+                       )"
+
+BEVEnv-discrete-v1:
+  normalize: true
+  n_envs: 1
+  n_timesteps: !!float 1e6
+  policy: 'MlpPolicy'
+  batch_size: 64
+  n_steps: 512
+  gamma: 0.99
+  gae_lambda: 0.9
+  n_epochs: 20
+  ent_coef: 0.0
+  sde_sample_freq: 4
+  max_grad_norm: 0.5
+  vf_coef: 0.5
+  learning_rate: !!float 3e-5
+  use_sde: False
+  clip_range: 0.2
+  policy_kwargs: "dict(log_std_init=-2.7,
+                       ortho_init=False,
+                       activation_fn=nn.ReLU,
+                       net_arch=[256, dict(pi=[256], vf=[256])]
                        )"
 
 # === Mujoco Envs ===

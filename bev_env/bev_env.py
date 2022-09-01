@@ -69,6 +69,10 @@ class BEVConfig(pydantic.BaseModel, extra=pydantic.Extra.forbid):
         description="return Done on collision.",
         default=True
     )
+    timeout_done: bool = pydantic.Field(
+        description="return Done on timeout/max steps reached.",
+        default=True
+    )
     obstacle_cost: float = pydantic.Field(
         default=500.0,
         description="cost of colliding with obstacle, reward = -cost"
@@ -90,18 +94,19 @@ class BEVEnv(gym.Env):
     "Bird Eye View Env with geometry_msgs/Twist as action"
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+    MAX_SPEED = 4.0
 
     def __init__(self, **kwargs):
         self.config = BEVConfig(**kwargs)
         if self.config.init_logging:
             logging.basicConfig(level=logging.DEBUG)
+        logging.info(self.config)
 
         self.grass_colors = [ImageColor.getcolor(grass_color, "RGB")[::-1] for grass_color in self.config.grass_colors]
         self.screen = None
         self.screen_dim = (1024, 768) # pygame screen size
         self.clock = None
         self.img_0_small = None
-        self.step_count = 0
 
         # action space: geometry_msgs/Twist
         # linear.x - forward velocity, m/s
@@ -109,7 +114,12 @@ class BEVEnv(gym.Env):
         if self.config.twist_only:
             self.action_space = spaces.Box(low=-np.pi/2, high=np.pi/2, shape=(1,), dtype=np.float32)
         else:
-            self.action_space = spaces.Box(low=-1, high=1, shape=(1,2), dtype=np.float32)
+            shape_12 = (2,)
+            self.action_space = spaces.Box(
+                low=np.array([-self.MAX_SPEED, -np.pi/2]).reshape(shape_12),
+                high=np.array([self.MAX_SPEED, np.pi/2]).reshape(shape_12),
+                shape=shape_12
+            )
 
         # observation space: RGB BEV segmentation image
         obs_img_shape = self.config.obs_img_shape + (3,)
@@ -127,6 +137,7 @@ class BEVEnv(gym.Env):
 
     def _reset(self):
         self.step_count = 0
+        self.total_reward = 0
         self.last_time_sec = time.time()
         self.current_position_m = list(self.config.initial_pos)
         self.abs_direction_rad = self.config.initial_rot  # clockwise positive
@@ -135,9 +146,9 @@ class BEVEnv(gym.Env):
             while tryouts > 0:
                 self.current_position_m = np.random.uniform(low=1.0, high=39.0, size=(2,)).tolist()
                 self.abs_direction_rad = np.random.uniform(low=-np.pi/2, high=np.pi/2, size=(1,)).item()
-                if self.staying_on_the_grass():
+                if self.staying_on_the_grass() and not self.only_grass_in_obs():
                     break
-            if not self.staying_on_the_grass():
+            if not tryouts:
                 raise Exception("cannot randomly place cart in allowed area")
 
         if self.config.twist_only:
@@ -157,10 +168,12 @@ class BEVEnv(gym.Env):
         color_at_pos = tuple(map(int, self.img_5[pos_pix]))
         return color_at_pos in self.grass_colors
 
-    def only_grass_in_obs(self, img):
-        colors, counts = np.unique(img.reshape(-1, img.shape[-1]), axis=0, return_counts=True)
+    def only_grass_in_obs(self, obs=None):
+        if obs is None:
+            obs = self._get_obs()
+        colors, counts = np.unique(obs.reshape(-1, obs.shape[-1]), axis=0, return_counts=True)
         # remove colors with counts < 1% of obs area in pix
-        thd = 0.1 * np.prod(img.shape[:2])
+        thd = 0.1 * np.prod(obs.shape[:2])
         colors = [tuple(col) for col, cnt in zip(colors, counts) if cnt > thd]
         return set(colors) - set(self.grass_colors) == set()
 
@@ -175,7 +188,6 @@ class BEVEnv(gym.Env):
             self.last_vel = action
 
         velocity_ms, yaw_rads = self.last_vel
-        costs = 0
         self.step_count += 1
         time_sec = time.time()
         time_diff = (time_sec - self.last_time_sec)
@@ -211,13 +223,14 @@ class BEVEnv(gym.Env):
         hit_obstacle = not self.staying_on_the_grass()
         if hit_obstacle:
             logging.warning(f"at step {self.step_count} hit an obstacle at location {self.current_position_m} direction {self.abs_direction_rad}")
-        costs = -1.0 if not hit_obstacle else self.config.obstacle_cost
+        reward = 1.0 * pos_increment_m
+        if hit_obstacle:
+            reward -= self.config.obstacle_cost
         obs = self._get_obs()
         only_grass_around = self.only_grass_in_obs(obs)
         if only_grass_around:
-            if not (-0.1 < yaw_rads < 0.1):
-                costs += 0.5
-
+            reward += np.pi/8 - abs(yaw_increment_rad)
+        self.total_reward += reward
         info = {
             "step_count": self.step_count,
             "max_episode_steps": self.config.max_episode_steps,
@@ -227,10 +240,13 @@ class BEVEnv(gym.Env):
             "current_position_m": self.current_position_m,
             "current_position_pix": self.position_in_pixels(),
             "abs_direction_rad": self.abs_direction_rad,
-            "reward": -costs,
+            "reward": reward,
+            "total_reward": self.total_reward,
             "collided_with_boundary": collided_with_boundary,
-            "only_grass_around": only_grass_around
+            "only_grass_around": only_grass_around,
         }
+        if self.step_count % 100 == 0:
+            logging.info(info)
 
         if self.config.render_in_step:
             self.render()
@@ -239,14 +255,16 @@ class BEVEnv(gym.Env):
         if self.config.max_episode_steps > 0:
             if self.step_count >= self.config.max_episode_steps:
                 logging.info(f"max episodes at step {self.config.max_episode_steps} reached")
-                # done = True
-                info["TimeLimit.truncated"] = True
+                if self.config.timeout_done:
+                    done = True
+                else:
+                    info["TimeLimit.truncated"] = True
         if self.config.obstacle_done and hit_obstacle:
             done = True
         if done:
             info["TimeLimit.truncated"] = False
-            logging.info(f"rollout done at step {self.step_count}")
-        return obs, -costs, done, info
+            logging.info(f"rollout done at step {self.step_count}, total_reward={self.total_reward}")
+        return obs, reward, done, info
 
     def reset(
         self,

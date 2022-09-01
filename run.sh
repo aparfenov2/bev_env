@@ -28,6 +28,9 @@ image="ml-py38-gpu"
     exit 0
 }
 
+ln -s ../try-gym-common/.app .app || true
+ln -s ../try-gym-common/.venv .venv || true
+
 VOLUMES=()
 for f in $(find . -type l); do
     [ -e "$f" ] && {
@@ -48,3 +51,5 @@ docker run -ti --rm \
     ${VOLUMES[@]} \
     -w /cdir \
     $image bash /cdir/$0 --inner $@
+
+rm .venv .app
