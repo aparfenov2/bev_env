@@ -22,6 +22,7 @@ while [[ "$#" -gt 0 ]]; do
         --in_docker) IN_DOCKER=1;;
         --build) DOCKER_BUILD=1;;
         --init) PREPARE_ENV=1;;
+        --image) DOCKER_IMAGE="$2"; shift;;
         --in_eplus) IN_EPLUS=1;;
         --tg) TG=1;;
         --_local_ip) LOCAL_IP="$2"; shift ;;
@@ -193,7 +194,7 @@ DATA_DIR='/cdir/data'
 
 [ -n "${TRAIN}" ] && {
     python train.py --algo ppo --env BEVEnv-v1 --gym-packages bev_env \
-        --env-kwargs const_dt:0.1 random_pos:True render_in_step:True \
+        --env-kwargs const_dt:0.1 random_pos:True \
         obstacle_done:True max_episode_steps:500 init_logging:True twist_only:False \
     2>&1 | tee train.log
     exit 0

@@ -223,7 +223,7 @@ class BEVEnv(gym.Env):
         hit_obstacle = not self.staying_on_the_grass()
         if hit_obstacle:
             logging.warning(f"at step {self.step_count} hit an obstacle at location {self.current_position_m} direction {self.abs_direction_rad}")
-        reward = 1.0 * pos_increment_m
+        reward = 10 * pos_increment_m
         if hit_obstacle:
             reward -= self.config.obstacle_cost
         obs = self._get_obs()
