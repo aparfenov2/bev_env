@@ -26,16 +26,18 @@ import bev_env
 
 def make_parser():
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--env-name', default='MiniWorld-Hallway-v0')
     parser.add_argument('--env-name', default='BEVEnv-v1')
-    parser.add_argument('--domain-rand', action='store_true', help='enable domain randomization')
-    parser.add_argument('--no-time-limit', action='store_true', help='ignore time step limits')
-    parser.add_argument('--top_view', action='store_true', help='show the top view instead of the agent view')
     return parser
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 VIEW_MODE = 'human'
 MIN_VEL  = 0
-MAX_VEL  = 5.0
+MAX_VEL  = 4.0
 MIN_RVEL = -np.pi/2
 MAX_RVEL = np.pi/2
 
@@ -47,14 +49,7 @@ class Main:
         self.cur_vel = [0, 0]
 
     def main(self):
-        self.env = gym.make(self.args.env_name, segm_in_obs=True)
-
-        if self.args.no_time_limit:
-            self.env.max_episode_steps = math.inf
-        if self.args.domain_rand:
-            self.env.domain_rand = True
-
-        # VIEW_MODE = 'top' if self.args.top_view else 'agent'
+        self.env = gym.make(self.args.env_name, segm_in_obs=True, twist_only=False)
 
         obs = self.env.reset()
         # Create the display window
@@ -103,8 +98,8 @@ class Main:
             "rad_inc": self.rad_inc,
         })
         print("----------------------------------------------")
-        print(json.dumps(json.loads(json.dumps(info), parse_float=lambda x: round(float(x), 3)), indent=4))
-        # print(json.dumps(info, indent=4))
+        # print(json.dumps(json.loads(json.dumps(info), parse_float=lambda x: round(float(x), 3)), indent=4))
+        print(json.dumps(info, indent=4, cls=NumpyEncoder))
 
         self.env.render(mode=VIEW_MODE)
 
