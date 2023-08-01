@@ -85,7 +85,7 @@ class Main:
         if len(self.env.action_space.shape) == 1 and self.env.action_space.shape[0] == 1:
             action = self.cur_vel[1]
         obs, reward, done, info = self.env.step(action)
-        cv2.imshow("winname", obs)
+        cv2.imshow("BEVEnv", obs)
         cv2.waitKey(1)
 
         # if done:

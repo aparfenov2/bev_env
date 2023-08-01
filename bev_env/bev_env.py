@@ -135,7 +135,7 @@ class BEVEnv(gym.Env):
         ) # 5m/tile, 8x8 tiles
         self._reset()
 
-    def _reset(self):
+    def _reset(self, place_near_grass_boundary=True):
         self.step_count = 0
         self.total_reward = 0
         self.last_time_sec = time.time()
@@ -146,8 +146,9 @@ class BEVEnv(gym.Env):
             while tryouts > 0:
                 self.current_position_m = np.random.uniform(low=1.0, high=39.0, size=(2,)).tolist()
                 self.abs_direction_rad = np.random.uniform(low=-np.pi/2, high=np.pi/2, size=(1,)).item()
-                if self.staying_on_the_grass() and not self.only_grass_in_obs():
-                    break
+                if self.staying_on_the_grass():
+                    if not place_near_grass_boundary or not self.only_grass_in_obs():
+                        break
             if not tryouts:
                 raise Exception("cannot randomly place cart in allowed area")
 
@@ -268,14 +269,14 @@ class BEVEnv(gym.Env):
 
     def reset(
         self,
-        *,
         seed: Optional[int] = None,
         return_info: bool = False,
-        options: Optional[dict] = None
+        options: Optional[dict] = None,
+        **kwargs
     ):
         # super().reset(seed=seed)
 
-        self._reset()
+        self._reset(**kwargs)
 
         if not return_info:
             return self._get_obs()
